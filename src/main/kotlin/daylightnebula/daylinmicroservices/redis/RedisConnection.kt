@@ -101,7 +101,7 @@ object RedisConnection {
         }
 
     // sync and async functions to insert key and value into redis database
-    fun setJson(key: String, value: JSONObject) = processRequest(key, syncCommands.set(key, value.toString()))
+    fun setJson(key: String, value: JSONObject) = resultIfInitialized { processRequest(key, syncCommands.set(key, value.toString())) }
     fun setJsonAsync(key: String, value: JSONObject) =
         asyncResultIfInitialized { future ->
             asyncCommands.set(key, value.toString()).whenComplete { value, throwable ->
@@ -109,4 +109,16 @@ object RedisConnection {
                 else future.complete(processRequest(key, value))
             }
         }
+
+    // functions to remove a key from redis
+    fun remove(key: String) = resultIfInitialized {
+        val result = syncCommands.del(key)
+        Result.Ok(JSONObject().put("delete_result", result))
+    }
+    fun removeAsync(key: String) = asyncResultIfInitialized { future ->
+        asyncCommands.del().whenComplete { result, throwable ->
+            if (throwable != null) future.complete(Result.Error(throwable.message ?: "Error with no message"))
+            else future.complete(Result.Ok(JSONObject().put("delete_result", result)))
+        }
+    }
 }
