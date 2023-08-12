@@ -13,90 +13,80 @@ abstract class RedisTableEntry(val uuid: UUID) {
 fun <T: RedisTableEntry> redisTable(name: String, fromJson: (uuid: UUID, json: JSONObject) -> T) = RedisTable<T>(name, fromJson)
 class RedisTable<T: RedisTableEntry>(val name: String, val fromJson: (uuid: UUID, json: JSONObject) -> T) {
     // registry of all uuids in this table
-    val registry = RedisJSONArray(name, JSONArray())
+    private val table = RedisJSONObject(name, JSONObject())
 
     // functions to get all uuids in table
     fun getAllIDsAsync(): CompletableFuture<List<UUID>> {
         val future = CompletableFuture<List<UUID>>()
-        registry.getAsync().whenComplete { array, _ ->
-            future.complete(array.map { UUID.fromString(it as String) })
+        table.getAsync().whenComplete { obj, _ ->
+            future.complete(obj.keySet().map { UUID.fromString(it as String) })
         }
         return future
     }
-    fun getAllIDs() = registry.get().map { UUID.fromString(it as String) }
+    fun getAllIDs() = table.get().keySet().map { UUID.fromString(it as String) }
 
     // function to get all table entries
-    fun getAll(): List<T> = getAllIDs().mapNotNull {
-        val uuid = it as? UUID ?: return@mapNotNull null
-        val request = RedisConnection.requestJson(uuid.toString())
-        if (request.isOk()) fromJson(uuid, request.unwrap()) else null
+    fun getAll(): List<T> {
+        val json = table.get()
+        return json.keySet().map { key -> fromJson(UUID.fromString(key), json.getJSONObject(key)) }
     }
 
     // function to asynchronously loop through all entries in table
-    fun forEachAsync(callback: (entry: T) -> Unit) {
-        getAllIDsAsync().whenComplete { uuids, _ ->
-            uuids.forEach {
-                RedisConnection.requestJsonAsync(it.toString()).whenComplete { result, _ ->
-                    if (result.isOk()) callback(fromJson(it, result.unwrap()))
-                    else RedisConnection.logger.error("Table entry request (uuid = $it) failed with error: ${result.error()}")
-                }
-            }
+    fun getAllAsync(): CompletableFuture<List<T>> {
+        val future = CompletableFuture<List<T>>()
+        table.getAsync().whenComplete { json, _ ->
+            future.complete(json.keySet().map { key -> fromJson(UUID.fromString(key), json.getJSONObject(key)) })
         }
+        return future
     }
 
     // functions to query table entries, operates as above but with a filter
-    fun queryAll(filter: (entry: T) -> Boolean) = getAll().filter { entry -> filter(entry) }
-    fun queryForEachAsync(filter: (entry: T) -> Boolean, callback: (entry: T) -> Unit) {
-        getAllIDsAsync().whenComplete { uuids, _ ->
-            uuids.forEach {
-                RedisConnection.requestJsonAsync(it.toString()).whenComplete { result, _ ->
-                    if (result.isOk())  {
-                        val entry = fromJson(it, result.unwrap())
-                        if (filter(entry)) callback(entry)
-                    } else RedisConnection.logger.error("Table entry request (uuid = $it) failed with error: ${result.error()}")
-                }
-            }
+    fun queryAll(filter: (entry: T) -> Boolean) = getAll().filter(filter)
+    fun queryAsync(filter: (entry: T) -> Boolean): CompletableFuture<List<T>> {
+        val future = CompletableFuture<List<T>>()
+        table.getAsync().whenComplete { json, _ ->
+            future.complete(
+                json.keySet()
+                    .map { key -> fromJson(UUID.fromString(key), json.getJSONObject(key)) }
+                    .filter(filter)
+            )
         }
+        return future
     }
 
     // functions to get specific table entries by UUID
     fun getEntry(uuid: UUID): Result<T> {
-        val json = RedisConnection.requestJson(uuid.toString())
-        return if (json.isOk()) Result.Ok(fromJson(uuid, json.unwrap()))
-        else Result.Error(json.error())
+        val json = table.get().optJSONObject(uuid.toString())
+            ?: return Result.Error<T>("No entry with uuid $uuid")
+        return Result.Ok(fromJson(uuid, json))
     }
     fun getEntryAsync(uuid: UUID): CompletableFuture<Result<T>> {
         val future = CompletableFuture<Result<T>>()
-        RedisConnection.requestJsonAsync(uuid.toString()).whenComplete { json, throwable ->
-            if (throwable != null) future.complete(Result.Error(throwable.message ?: "No error message"))
-            else if (json.isOk()) future.complete(Result.Ok(fromJson(uuid, json.unwrap())))
-            else future.complete(Result.Error(json.error()))
+        table.getAsync().whenComplete { json, _ ->
+            if (json == null || !json.keySet().contains(uuid.toString()))
+                future.complete(Result.Error("No entry with uuid $uuid"))
+            else future.complete(Result.Ok(fromJson(uuid, json)))
         }
         return future
     }
 
     // add or update an entry to the table by updating its value in redis and making sure it is in the registry
-    fun insertOrUpdate(entry: T) = registry.getAsync().whenComplete { curRegistry, _ ->
-        // make sure registry contains this uuid
-        if (!curRegistry.contains(entry.uuid)) {
-            curRegistry.put(entry.uuid)
-            registry.setAsync(curRegistry)
-        }
-
-        // insert or update entry in redis
-        RedisConnection.setJsonAsync(entry.uuid.toString(), entry.toJson())
+    fun insertOrUpdate(entry: T) = table.set(table.get().put(entry.uuid.toString(), entry.toJson()))
+    fun insertOrUpdateAsync(entry: T) = table.getAsync().whenComplete { json, _ ->
+        json.put(entry.uuid.toString(), entry.toJson())
+        table.setAsync(json)
     }
 
     // functions to remove an entry from the table
+    fun removeAsync(entry: T) = removeAsync(entry.uuid)
+    fun removeAsync(uuid: UUID) = table.getAsync().whenComplete { json, _ ->
+        json.remove(uuid.toString())
+        table.set(json)
+    }
     fun remove(entry: T) = remove(entry.uuid)
-    fun remove(uuid: UUID) = registry.getAsync().whenComplete { curRegistry, _ ->
-        // remove registry if necessary
-        if (curRegistry.contains(uuid)) {
-            curRegistry.remove(curRegistry.indexOf(uuid))
-            registry.setAsync(curRegistry)
-        }
-
-        // remove entry
-        RedisConnection.removeAsync(uuid.toString())
+    fun remove(uuid: UUID) {
+        val json = table.get()
+        json.remove(uuid.toString())
+        table.set(json)
     }
 }
