@@ -1,5 +1,6 @@
 package daylightnebula.daylinmicroservices.redis
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.CompletableFuture
 
@@ -79,4 +80,9 @@ class RedisString(key: String, default: String): RedisValue<String>(key, default
 class RedisJSONObject(key: String, default: JSONObject): RedisValue<JSONObject>(key, default) {
     override fun fromJson(value: JSONObject) = value
     override fun toJson(value: JSONObject) = value
+}
+
+class RedisJSONArray(key: String, default: JSONArray): RedisValue<JSONArray>(key, default) {
+    override fun fromJson(value: JSONObject) = value.optJSONArray("value") ?: default
+    override fun toJson(value: JSONArray) = JSONObject().put("value", value)
 }
