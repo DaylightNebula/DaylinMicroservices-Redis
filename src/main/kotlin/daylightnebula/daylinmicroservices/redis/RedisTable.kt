@@ -10,6 +10,7 @@ abstract class RedisTableEntry(val uuid: UUID) {
     abstract fun toJson(): JSONObject
 }
 
+fun <T: RedisTableEntry> redisTable(name: String, fromJson: (json: JSONObject) -> T) = RedisTable<T>(name, fromJson)
 class RedisTable<T: RedisTableEntry>(val name: String, val fromJson: (json: JSONObject) -> T) {
     // registry of all uuids in this table
     val registry = RedisJSONArray(name, JSONArray())
