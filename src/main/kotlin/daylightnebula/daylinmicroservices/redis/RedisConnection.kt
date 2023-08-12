@@ -8,7 +8,10 @@ import io.lettuce.core.api.async.RedisAsyncCommands
 import io.lettuce.core.api.sync.RedisCommands
 import mu.KotlinLogging
 import org.json.JSONObject
+import java.awt.event.TextEvent
+import java.lang.Thread.sleep
 import java.time.Duration
+import java.util.UUID
 import java.util.concurrent.CompletableFuture
 import kotlin.concurrent.thread
 
@@ -72,7 +75,9 @@ object RedisConnection {
     ): CompletableFuture<Result<JSONObject>> {
         val future = CompletableFuture<Result<JSONObject>>()
         if (!isInitialized()) future.complete(Result.Error("Redis connection not initialized"))
-        else internal(future)
+        else {
+            internal(future)
+        }
         return future
     }
 

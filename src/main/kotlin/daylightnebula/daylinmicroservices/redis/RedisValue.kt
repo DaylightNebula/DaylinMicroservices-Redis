@@ -26,10 +26,10 @@ abstract class RedisValue<T: Any>(val key: String, val default: T) {
     fun getAsync(): CompletableFuture<T> {
         val future = CompletableFuture<T>()
         RedisConnection.requestJsonAsync(key).whenComplete { value, _ ->
-            if (value.isOk()) fromJson(value.unwrap())
+            if (value.isOk()) future.complete(fromJson(value.unwrap()))
             else {
                 RedisConnection.logger.error("Failed to get $key from redis with error: ${value.error()}")
-                default
+                future.complete(default)
             }
         }
         return future
